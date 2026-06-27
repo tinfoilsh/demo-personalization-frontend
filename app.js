@@ -26,10 +26,9 @@ const state = {
 // One SecureClient per enclave URL. The Tinfoil shim in front of the control
 // server terminates TLS + speaks EHBP, so client.fetch attests the enclave
 // (fetches the bundle from ATC, verifies code + enclave measurements against
-// the configRepo) and encrypts every request body end-to-end. The auth headers
-// (X-Demo-Key / X-Encryption-Key) travel in plaintext to the verified enclave,
-// same as before — the win is that the *bodies* (training corpus, chat) are now
-// sealed to the attested enclave.
+// the configRepo) and encrypts every request body end-to-end. The demo key
+// travels as a header (X-Demo-Key); the encryption key travels in the body,
+// sealed by EHBP so only the verified enclave can see it.
 let secureClient = null;
 let secureClientBase = null;
 let attestationError = null;
@@ -68,11 +67,19 @@ function busy(btn, on) {
 
 // ── api ────────────────────────────────────────────────────
 function headers() {
+  // The demo key gates access (fine for the shim/router to see). The encryption
+  // key decrypts the user's private adapter — it travels in the encrypted body,
+  // never a header, so Tinfoil can't see it. See authBody().
   return {
     "Content-Type": "application/json",
     "X-Demo-Key": state.demoKey,
-    "X-Encryption-Key": state.encKey,
   };
+}
+
+// Build a JSON body that includes the encryption key (EHBP-encrypted, so only
+// the verified enclave sees it). Every authenticated endpoint takes this.
+function authBody(payload = {}) {
+  return JSON.stringify({ ...payload, encryption_key: state.encKey });
 }
 
 // All requests go through the attesting SecureClient instead of raw fetch.
@@ -96,7 +103,7 @@ async function api(path, opts = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-const getStatus = () => api("/status");
+const getStatus = () => api("/status", { method: "POST", body: authBody() });
 
 // Probe demo-key validity with a throwaway encryption key. On success the real
 // demo key / api base are committed to `state`; on failure `state` is left
@@ -120,12 +127,13 @@ async function verifyDemoKey(key, base) {
   }
 }
 const startTraining = (documents) =>
-  api("/train", { method: "POST", body: JSON.stringify({ documents }) });
+  api("/train", { method: "POST", body: authBody({ documents }) });
 
 async function chatCompletion(messages, useBase) {
   const body = {
     messages,
     stream: false,
+    encryption_key: state.encKey,
     ...(useBase ? { use_base: true } : {}),
   };
   const data = await api("/v1/chat/completions", {
