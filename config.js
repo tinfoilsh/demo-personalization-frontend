@@ -4,7 +4,7 @@
 // Override at runtime on the connect screen (persisted to localStorage under
 // `pz.apiBase`).
 window.DEFAULT_API_BASE =
-  "https://demo-personalization.debug.tinfoil.containers.tinfoil.dev";
+  "https://demo-personalization.tinfoil.containers.tinfoil.dev";
 
 // GitHub repo the enclave image is verified against (code attestation).
 // Must match the repo the enclave was built/released from.
