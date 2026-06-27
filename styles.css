@@ -483,6 +483,42 @@ textarea {
   flex-direction: column;
   animation: rise 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+.chat-view.compare {
+  max-width: 1080px;
+}
+.chat-columns {
+  flex: 1;
+  display: flex;
+  gap: 18px;
+  min-height: 0;
+  padding-top: 16px;
+}
+.chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.panel-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 0 4px 10px;
+}
+.chat-panel[data-side="base"] .panel-label {
+  color: var(--muted);
+}
+.send-both {
+  background: transparent;
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+}
+.send-both:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 
 .chat-head {
   display: flex;
@@ -514,6 +550,7 @@ textarea {
 
 .messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 22px 4px;
   display: flex;

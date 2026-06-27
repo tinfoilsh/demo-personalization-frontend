@@ -15,9 +15,40 @@ const state = {
   encKey: sessionStorage.getItem(SS.encKey) || "",
   adapter: "",
   sources: [], // train inputs: {id, name, chunks}
-  messages: [], // ephemeral conversation: {role, content}
-  sending: false,
+  messages: [], // adapter conversation: {role, content}
+  baseMessages: [], // base-model conversation (compare mode)
+  sending: false, // adapter panel busy
+  baseSending: false, // base panel busy
+  compare: false, // compare-base side-by-side on?
 };
+
+// ── secure client (attestation + EHBP) ─────────────────────
+// One SecureClient per enclave URL. The Tinfoil shim in front of the control
+// server terminates TLS + speaks EHBP, so client.fetch attests the enclave
+// (fetches the bundle from ATC, verifies code + enclave measurements against
+// the configRepo) and encrypts every request body end-to-end. The demo key
+// travels as a header (X-Demo-Key); the encryption key travels in the body,
+// sealed by EHBP so only the verified enclave can see it.
+let secureClient = null;
+let secureClientBase = null;
+let attestationError = null;
+
+function getSecureClient() {
+  const base = state.apiBase.replace(/\/$/, "");
+  if (secureClient && secureClientBase === base) return secureClient;
+  secureClient = new Tinfoil.SecureClient({
+    enclaveURL: base,
+    configRepo: window.TINFOIL_CONFIG_REPO,
+  });
+  secureClientBase = base;
+  attestationError = null;
+  // Kick off attestation in the background; client.fetch awaits ready() on the
+  // first real request. A failed ready() surfaces as an error on that request.
+  secureClient.ready().catch((e) => {
+    attestationError = e;
+  });
+  return secureClient;
+}
 
 // ── dom helpers ────────────────────────────────────────────
 const $ = (id) => document.getElementById(id);
@@ -36,15 +67,27 @@ function busy(btn, on) {
 
 // ── api ────────────────────────────────────────────────────
 function headers() {
+  // The demo key gates access (fine for the shim/router to see). The encryption
+  // key decrypts the user's private adapter — it travels in the encrypted body,
+  // never a header, so Tinfoil can't see it. See authBody().
   return {
     "Content-Type": "application/json",
     "X-Demo-Key": state.demoKey,
-    "X-Encryption-Key": state.encKey,
   };
 }
 
+// Build a JSON body that includes the encryption key (EHBP-encrypted, so only
+// the verified enclave sees it). Every authenticated endpoint takes this.
+function authBody(payload = {}) {
+  return JSON.stringify({ ...payload, encryption_key: state.encKey });
+}
+
+// All requests go through the attesting SecureClient instead of raw fetch.
+// client.fetch resolves the path against the enclave URL, encrypts the body via
+// EHBP, and verifies the enclave on the first call (cached thereafter).
 async function api(path, opts = {}) {
-  const res = await fetch(state.apiBase.replace(/\/$/, "") + path, {
+  const client = getSecureClient();
+  const res = await client.fetch(path, {
     ...opts,
     headers: { ...headers(), ...(opts.headers || {}) },
   });
@@ -60,7 +103,7 @@ async function api(path, opts = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-const getStatus = () => api("/status");
+const getStatus = () => api("/status", { method: "POST", body: authBody() });
 
 // Probe demo-key validity with a throwaway encryption key. On success the real
 // demo key / api base are committed to `state`; on failure `state` is left
@@ -84,12 +127,13 @@ async function verifyDemoKey(key, base) {
   }
 }
 const startTraining = (documents) =>
-  api("/train", { method: "POST", body: JSON.stringify({ documents }) });
+  api("/train", { method: "POST", body: authBody({ documents }) });
 
 async function chatCompletion(messages, useBase) {
   const body = {
     messages,
     stream: false,
+    encryption_key: state.encKey,
     ...(useBase ? { use_base: true } : {}),
   };
   const data = await api("/v1/chat/completions", {
@@ -362,7 +406,13 @@ let pollTimer = null;
 
 // Hide every input affordance while a job runs; restore them if it fails.
 function setTrainingMode(on) {
-  for (const id of ["dropzone", "paste-block", "sources-list", "chunk-summary", "train-btn"]) {
+  for (const id of [
+    "dropzone",
+    "paste-block",
+    "sources-list",
+    "chunk-summary",
+    "train-btn",
+  ]) {
     setHidden($(id), on);
   }
   setHidden($("train-progress"), !on);
@@ -401,6 +451,10 @@ async function pollStatus() {
 }
 
 // ── chat ───────────────────────────────────────────────────
+// Compare mode splits the view into two side-by-side panels: the adapter (left,
+// always present) and the base model (right, toggled on). Each panel owns its
+// own conversation + input. The adapter panel has an extra "send to both" button
+// (⇈) that broadcasts its input to both models in parallel.
 function enterChat(status) {
   clearTimeout(pollTimer);
   refreshTopbar(true);
@@ -409,34 +463,66 @@ function enterChat(status) {
       ? ` · reward ${Number(status.mean_reward).toFixed(3)}`
       : "";
   $("chat-meta").textContent = `${state.adapter}${reward}`;
+  $("base-toggle").checked = false;
+  setCompareMode(false);
   renderMessages();
+  renderBaseMessages();
   show("view-chat");
   $("chat-input").focus();
 }
 
+function setCompareMode(on) {
+  state.compare = on;
+  $("view-chat").classList.toggle("compare", on);
+  setHidden($("base-panel"), !on);
+  setHidden($("send-both-btn"), !on);
+  if (on) renderBaseMessages();
+  updateSendBoth();
+}
+
+function updateSendBoth() {
+  const btn = $("send-both-btn");
+  if (btn.classList.contains("hidden")) return;
+  btn.disabled = state.sending || state.baseSending;
+}
+
 function renderMessages() {
-  const box = $("messages");
+  renderInto(
+    $("messages"),
+    state.messages,
+    "adapter",
+    "// say something — your model is listening",
+  );
+}
+function renderBaseMessages() {
+  renderInto(
+    $("base-messages"),
+    state.baseMessages,
+    "base",
+    "// say something — the base model is listening",
+  );
+}
+function renderInto(box, messages, side, emptyHint) {
   box.innerHTML = "";
-  if (!state.messages.length) {
+  if (!messages.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "// say something — your model is listening";
+    empty.textContent = emptyHint;
     box.appendChild(empty);
     return;
   }
-  for (const m of state.messages) appendMessageEl(m.role, m.content, m.variant);
+  for (const m of messages) appendMessageEl(box, m.role, m.content, side);
   box.scrollTop = box.scrollHeight;
 }
 
-function appendMessageEl(role, content, variant) {
-  const box = $("messages");
+function appendMessageEl(box, role, content, side) {
   box.querySelector(".empty-state")?.remove();
   const el = document.createElement("div");
-  el.className = `msg ${role}${variant ? " " + variant : ""}`;
+  el.className = `msg ${role}${side === "base" && role === "assistant" ? " base" : ""}`;
   const label = document.createElement("div");
   label.className = "msg-role";
   label.textContent =
-    role === "user" ? "you" : variant === "base" ? "base model" : "your model";
+    role === "user" ? "you" : side === "base" ? "base model" : "your model";
   const bubble = document.createElement("div");
   bubble.className = "msg-bubble";
   bubble.textContent = content;
@@ -446,71 +532,158 @@ function appendMessageEl(role, content, variant) {
   return bubble;
 }
 
+function wireInput(input, formId) {
+  input.addEventListener("input", () => {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 180) + "px";
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      $(formId).requestSubmit();
+    }
+  });
+}
+
 const chatInput = $("chat-input");
-chatInput.addEventListener("input", () => {
-  chatInput.style.height = "auto";
-  chatInput.style.height = Math.min(chatInput.scrollHeight, 180) + "px";
-});
-chatInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    $("chat-form").requestSubmit();
-  }
-});
+const baseChatInput = $("base-chat-input");
+wireInput(chatInput, "chat-form");
+wireInput(baseChatInput, "base-chat-form");
 
-$("chat-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const text = chatInput.value.trim();
-  if (!text || state.sending) return;
-  const useBase = $("base-toggle").checked;
-
-  state.messages.push({ role: "user", content: text });
-  appendMessageEl("user", text);
-  chatInput.value = "";
-  chatInput.style.height = "auto";
-
-  state.sending = true;
-  $("send-btn").disabled = true;
-
-  // The conversation we send is just the real turns (no UI-only variants).
-  const convo = state.messages
-    .filter((m) => m.role === "user" || (m.role === "assistant" && !m.variant))
+// Conversation we send to the API: just the real user/assistant turns.
+function convoFrom(messages) {
+  return messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ role: m.role, content: m.content }));
+}
 
-  const bubble = appendMessageEl("assistant", "", useBase ? "base" : undefined);
+// Send one panel's input to that panel's model only.
+async function sendOne(side) {
+  const isBase = side === "base";
+  const input = $(isBase ? "base-chat-input" : "chat-input");
+  const box = isBase ? $("base-messages") : $("messages");
+  const messages = isBase ? state.baseMessages : state.messages;
+  const busy = isBase ? "baseSending" : "sending";
+  const sendBtn = $(isBase ? "base-send-btn" : "send-btn");
+
+  const text = input.value.trim();
+  if (!text || state[busy]) return;
+
+  messages.push({ role: "user", content: text });
+  appendMessageEl(box, "user", text, side);
+  input.value = "";
+  input.style.height = "auto";
+
+  state[busy] = true;
+  sendBtn.disabled = true;
+  updateSendBoth();
+
+  const bubble = appendMessageEl(box, "assistant", "", side);
   bubble.parentElement.classList.add("cursor");
   try {
-    const reply = await chatCompletion(convo, useBase);
+    const reply = await chatCompletion(convoFrom(messages), isBase);
     bubble.parentElement.classList.remove("cursor");
     bubble.textContent = reply;
-    // Only the adapter's replies become part of the ongoing context.
-    if (useBase) {
-      state.messages.push({
-        role: "assistant",
-        content: reply,
-        variant: "base",
-      });
-    } else {
-      state.messages.push({ role: "assistant", content: reply });
-    }
+    messages.push({ role: "assistant", content: reply });
   } catch (err) {
     bubble.parentElement.classList.remove("cursor");
     bubble.parentElement.classList.add("error");
     bubble.textContent = friendly(err);
-    // drop the failed user turn from context so retry isn't poisoned
-    state.messages.pop();
+    messages.pop(); // drop the failed user turn so retry isn't poisoned
   } finally {
-    state.sending = false;
-    $("send-btn").disabled = false;
-    $("messages").scrollTop = $("messages").scrollHeight;
-    chatInput.focus();
+    state[busy] = false;
+    sendBtn.disabled = false;
+    updateSendBoth();
+    box.scrollTop = box.scrollHeight;
+    input.focus();
   }
+}
+
+// Send the adapter panel's input to both models at once (parallel).
+async function sendBoth(text) {
+  if (!text || state.sending || state.baseSending) return;
+
+  state.messages.push({ role: "user", content: text });
+  state.baseMessages.push({ role: "user", content: text });
+  appendMessageEl($("messages"), "user", text, "adapter");
+  appendMessageEl($("base-messages"), "user", text, "base");
+  $("chat-input").value = "";
+  $("chat-input").style.height = "auto";
+
+  state.sending = true;
+  state.baseSending = true;
+  $("send-btn").disabled = true;
+  $("base-send-btn").disabled = true;
+  updateSendBoth();
+
+  const adapterBubble = appendMessageEl(
+    $("messages"),
+    "assistant",
+    "",
+    "adapter",
+  );
+  const baseBubble = appendMessageEl(
+    $("base-messages"),
+    "assistant",
+    "",
+    "base",
+  );
+  adapterBubble.parentElement.classList.add("cursor");
+  baseBubble.parentElement.classList.add("cursor");
+
+  const adapterConvo = convoFrom(state.messages);
+  const baseConvo = convoFrom(state.baseMessages);
+
+  const settle = async (bubble, messages, convo, isBase) => {
+    try {
+      const reply = await chatCompletion(convo, isBase);
+      bubble.parentElement.classList.remove("cursor");
+      bubble.textContent = reply;
+      messages.push({ role: "assistant", content: reply });
+    } catch (err) {
+      bubble.parentElement.classList.remove("cursor");
+      bubble.parentElement.classList.add("error");
+      bubble.textContent = friendly(err);
+      messages.pop();
+    }
+  };
+
+  await Promise.all([
+    settle(adapterBubble, state.messages, adapterConvo, false),
+    settle(baseBubble, state.baseMessages, baseConvo, true),
+  ]);
+
+  state.sending = false;
+  state.baseSending = false;
+  $("send-btn").disabled = false;
+  $("base-send-btn").disabled = false;
+  updateSendBoth();
+  $("messages").scrollTop = $("messages").scrollHeight;
+  $("base-messages").scrollTop = $("base-messages").scrollHeight;
+  $("chat-input").focus();
+}
+
+$("base-toggle").addEventListener("change", () =>
+  setCompareMode($("base-toggle").checked),
+);
+$("chat-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  sendOne("adapter");
 });
+$("base-chat-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  sendOne("base");
+});
+$("send-both-btn").addEventListener("click", () =>
+  sendBoth($("chat-input").value.trim()),
+);
 
 $("clear-chat-btn").addEventListener("click", () => {
   state.messages = [];
+  state.baseMessages = [];
   renderMessages();
-  chatInput.focus();
+  renderBaseMessages();
+  $("chat-input").focus();
 });
 
 // ── logout ─────────────────────────────────────────────────
@@ -519,6 +692,7 @@ function logout(reason) {
   state.encKey = "";
   state.adapter = "";
   state.messages = [];
+  state.baseMessages = [];
   state.sources = [];
   sessionStorage.removeItem(SS.encKey);
   refreshTopbar(false);
@@ -540,10 +714,25 @@ function friendly(err) {
   if (err instanceof TypeError) {
     return "can't reach the control server — check the url / CORS";
   }
+  // SecureClient attestation failures (enclave verification, ATC fetch, etc.).
+  // These have a `.name` set by the SDK's error classes.
+  if (
+    err instanceof Tinfoil.AttestationError ||
+    err instanceof Tinfoil.ConfigurationError ||
+    err instanceof Tinfoil.FetchError ||
+    err instanceof Tinfoil.TinfoilError
+  ) {
+    return `couldn't verify the secure enclave: ${err.message}`;
+  }
   return err.message || String(err);
 }
 
 // ── boot ───────────────────────────────────────────────────
+// Kick off enclave attestation as early as possible — it takes a few seconds
+// (fetch bundle from ATC, verify sigstore + enclave measurements). The first
+// client.fetch awaits ready() if it's not done yet.
+getSecureClient();
+
 (async function boot() {
   if (!state.demoKey) {
     show("view-gate");

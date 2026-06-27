@@ -149,10 +149,7 @@
             <div id="chat-meta" class="muted small"></div>
           </div>
           <div class="chat-actions">
-            <label
-              class="toggle"
-              title="Send to the base model instead of your adapter"
-            >
+            <label class="toggle" title="Show the base model side-by-side">
               <input id="base-toggle" type="checkbox" />
               <span>compare base</span>
             </label>
@@ -161,26 +158,61 @@
             </button>
           </div>
         </div>
-        <div id="messages" class="messages"></div>
-        <form id="chat-form" class="chat-form">
-          <textarea
-            id="chat-input"
-            rows="1"
-            placeholder="Message your model…"
-            autocomplete="off"
-          ></textarea>
-          <button
-            id="send-btn"
-            class="send-btn"
-            type="submit"
-            aria-label="send"
-          >
-            ↑
-          </button>
-        </form>
+        <div id="chat-columns" class="chat-columns">
+          <div class="chat-panel" data-side="adapter">
+            <div class="panel-label">your model</div>
+            <div id="messages" class="messages"></div>
+            <form id="chat-form" class="chat-form">
+              <textarea
+                id="chat-input"
+                rows="1"
+                placeholder="Message your model…"
+                autocomplete="off"
+              ></textarea>
+              <button
+                id="send-both-btn"
+                class="send-btn send-both hidden"
+                type="button"
+                title="send to both"
+                aria-label="send to both"
+              >
+                ⇈
+              </button>
+              <button
+                id="send-btn"
+                class="send-btn"
+                type="submit"
+                aria-label="send"
+              >
+                ↑
+              </button>
+            </form>
+          </div>
+          <div id="base-panel" class="chat-panel hidden" data-side="base">
+            <div class="panel-label">base model</div>
+            <div id="base-messages" class="messages"></div>
+            <form id="base-chat-form" class="chat-form">
+              <textarea
+                id="base-chat-input"
+                rows="1"
+                placeholder="Message the base model…"
+                autocomplete="off"
+              ></textarea>
+              <button
+                id="base-send-btn"
+                class="send-btn"
+                type="submit"
+                aria-label="send"
+              >
+                ↑
+              </button>
+            </form>
+          </div>
+        </div>
       </section>
     </main>
 
+    <script src="vendor/tinfoil.js"></script>
     <script src="config.js"></script>
     <script src="app.js"></script>
   </body>
