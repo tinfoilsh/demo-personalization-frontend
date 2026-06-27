@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tinfoil · Personalization</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="grid-bg" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">◆</span>
+        <span class="brand-name">TINFOIL</span>
+        <span class="brand-sep">/</span>
+        <span class="brand-sub">personalization</span>
+      </div>
+      <div class="topbar-right">
+        <span id="identity-chip" class="chip hidden"></span>
+        <button id="logout-btn" class="ghost-btn hidden">disconnect</button>
+      </div>
+    </header>
+
+    <main class="stage">
+      <!-- ── Demo key gate ─────────────────────────────────────── -->
+      <section id="view-gate" class="view panel">
+        <div class="panel-tag">access</div>
+        <h1>Enter the gate</h1>
+        <p class="muted">
+          A demo key unlocks the playground. Your training and inference run
+          inside a Tinfoil private enclave.
+        </p>
+        <form id="gate-form" class="stack" autocomplete="off">
+          <label class="field">
+            <span>demo key</span>
+            <input
+              id="demo-key-input"
+              type="password"
+              placeholder="demo key"
+              required
+            />
+          </label>
+          <button class="primary-btn" type="submit">
+            <span class="btn-label">Continue →</span>
+            <span class="btn-spinner hidden"></span>
+          </button>
+          <p id="gate-error" class="error hidden"></p>
+        </form>
+      </section>
+
+      <!-- ── Encryption key ────────────────────────────────────── -->
+      <section id="view-key" class="view panel hidden">
+        <div class="panel-tag">identity</div>
+        <h1>Your encryption key</h1>
+        <p class="muted">
+          This key is your identity. It names your private adapter and decrypts
+          it — the server never stores it. New key → train a model. Existing key
+          → start chatting.
+        </p>
+        <form id="key-form" class="stack" autocomplete="off">
+          <label class="field">
+            <span>encryption key <small>(min 8 chars)</small></span>
+            <input
+              id="enc-key-input"
+              type="password"
+              placeholder="a secret only you hold"
+              minlength="8"
+              required
+            />
+          </label>
+          <button class="primary-btn" type="submit">
+            <span class="btn-label">Connect →</span>
+            <span class="btn-spinner hidden"></span>
+          </button>
+          <p id="key-error" class="error hidden"></p>
+        </form>
+      </section>
+
+      <!-- ── Train ─────────────────────────────────────────────── -->
+      <section id="view-train" class="view panel wide hidden">
+        <div class="panel-tag">train</div>
+        <h1>Teach it your style</h1>
+        <p class="muted">
+          No adapter exists for this key yet. Add a few documents in the voice
+          you want the model to learn, then kick off a private RL run.
+        </p>
+        <div id="docs-list" class="docs-list"></div>
+        <button id="add-doc-btn" class="ghost-btn add-doc" type="button">
+          + add document
+        </button>
+        <button id="train-btn" class="primary-btn" type="button">
+          <span class="btn-label">Start training</span>
+          <span class="btn-spinner hidden"></span>
+        </button>
+        <p id="train-error" class="error hidden"></p>
+
+        <div id="train-progress" class="train-progress hidden">
+          <div class="pulse-row">
+            <span class="pulse-dot"></span>
+            <span id="train-status-text">training in progress…</span>
+          </div>
+          <p class="muted small">
+            One GPU, one job at a time. This can take a few minutes — the page
+            polls for you.
+          </p>
+        </div>
+      </section>
+
+      <!-- ── Chat ──────────────────────────────────────────────── -->
+      <section id="view-chat" class="view chat-view hidden">
+        <div class="chat-head">
+          <div>
+            <div class="chat-title">Your personalized model</div>
+            <div id="chat-meta" class="muted small"></div>
+          </div>
+          <div class="chat-actions">
+            <label
+              class="toggle"
+              title="Send to the base model instead of your adapter"
+            >
+              <input id="base-toggle" type="checkbox" />
+              <span>compare base</span>
+            </label>
+            <button id="clear-chat-btn" class="ghost-btn" type="button">
+              clear
+            </button>
+          </div>
+        </div>
+        <div id="messages" class="messages"></div>
+        <form id="chat-form" class="chat-form">
+          <textarea
+            id="chat-input"
+            rows="1"
+            placeholder="Message your model…"
+            autocomplete="off"
+          ></textarea>
+          <button
+            id="send-btn"
+            class="send-btn"
+            type="submit"
+            aria-label="send"
+          >
+            ↑
+          </button>
+        </form>
+      </section>
+    </main>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
