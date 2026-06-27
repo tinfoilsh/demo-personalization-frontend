@@ -9505,7 +9505,8 @@ jaDTSFaq1NIwodHp7X9fOG48uRuJWS8GmifD969sC4Ut2FJFoklceBVUNCHR
     ConfigurationError: () => ConfigurationError,
     FetchError: () => FetchError,
     SecureClient: () => SecureClient,
-    TinfoilError: () => TinfoilError
+    TinfoilError: () => TinfoilError,
+    UnverifiedClient: () => UnverifiedClient
   });
 
   // node_modules/hpke/index.js
@@ -13818,6 +13819,22 @@ jaDTSFaq1NIwodHp7X9fOG48uRuJWS8GmifD969sC4Ut2FJFoklceBVUNCHR
   async function createIdentityFromPublicKeyHex(publicKeyHex) {
     return Identity.fromPublicKeyHex(publicKeyHex);
   }
+  async function getServerIdentity(enclaveURL) {
+    const keysURL = new URL(PROTOCOL.KEYS_PATH, enclaveURL);
+    if (keysURL.protocol !== "https:") {
+      throw new ConfigurationError(`HTTPS is required for key retrieval. Got ${keysURL.protocol}`);
+    }
+    const response = await fetch(keysURL.toString());
+    if (!response.ok) {
+      throw new FetchError(`Failed to fetch HPKE public key from enclave: HTTP ${response.status}`);
+    }
+    const contentType = response.headers.get("content-type");
+    if (contentType !== PROTOCOL.KEYS_MEDIA_TYPE) {
+      throw new FetchError(`Invalid response from HPKE key endpoint: Expected content-type "${PROTOCOL.KEYS_MEDIA_TYPE}", got "${contentType}"`);
+    }
+    const keysData = new Uint8Array(await response.arrayBuffer());
+    return await Identity.unmarshalPublicConfig(keysData);
+  }
   function normalizeEncryptedBodyRequestArgs(input, init) {
     if (typeof input === "string") {
       return { url: input, init };
@@ -13892,6 +13909,44 @@ jaDTSFaq1NIwodHp7X9fOG48uRuJWS8GmifD969sC4Ut2FJFoklceBVUNCHR
       }
     };
   }
+  function createUnverifiedEncryptedBodyFetch(baseURL, keyOrigin) {
+    console.warn("[tinfoil] WARNING: createUnverifiedEncryptedBodyFetch is insecure. The HPKE key is fetched from the server without attestation verification. Only use for local development and testing of the EHBP protocol.");
+    const baseOrigin = new URL(baseURL).origin;
+    const resolvedKeyOrigin = keyOrigin ? new URL(keyOrigin).origin : baseOrigin;
+    const needsEnclaveHeader = !!keyOrigin && resolvedKeyOrigin !== baseOrigin;
+    let transportPromise = null;
+    const getOrCreateTransport = async () => {
+      if (!transportPromise) {
+        transportPromise = getUnverifiedTransportForOrigin(baseOrigin, resolvedKeyOrigin);
+      }
+      return transportPromise;
+    };
+    return {
+      fetch: async (input, init) => {
+        const normalized = normalizeEncryptedBodyRequestArgs(input, init);
+        const targetUrl = new URL(normalized.url, baseURL);
+        const headers = new Headers(normalized.init?.headers);
+        if (needsEnclaveHeader) {
+          headers.set(ENCLAVE_URL_HEADER, keyOrigin);
+        }
+        const initWithEnclaveHeader = { ...normalized.init, headers };
+        const transportInstance = await getOrCreateTransport();
+        return transportInstance.request(targetUrl.toString(), initWithEnclaveHeader);
+      },
+      async getSessionRecoveryToken() {
+        if (!transportPromise) {
+          throw new Error("No session recovery token available \u2014 no request has been made yet");
+        }
+        const transport = await transportPromise;
+        return transport.getSessionRecoveryToken();
+      }
+    };
+  }
+  async function getUnverifiedTransportForOrigin(origin, keyOrigin) {
+    const serverIdentity = await getServerIdentity(keyOrigin);
+    const requestHost = new URL(origin).host;
+    return new Transport(serverIdentity, requestHost);
+  }
   async function getTransportForOrigin(origin, hpkePublicKeyHex) {
     const serverIdentity = await createIdentityFromPublicKeyHex(hpkePublicKeyHex);
     const requestHost = new URL(origin).host;
@@ -13951,6 +14006,18 @@ jaDTSFaq1NIwodHp7X9fOG48uRuJWS8GmifD969sC4Ut2FJFoklceBVUNCHR
       vcek: bundle.vcek,
       enclaveCert: bundle.enclaveCert
     };
+  }
+  async function fetchRouter(atcBaseUrl = TINFOIL_CONFIG.ATC_BASE_URL) {
+    const routersUrl = `${atcBaseUrl}/routers?platform=snp`;
+    const response = await fetch(routersUrl);
+    if (!response.ok) {
+      throw new FetchError(`Failed to fetch router list from ${atcBaseUrl}: HTTP ${response.status} ${response.statusText}`);
+    }
+    const routers = await response.json();
+    if (!Array.isArray(routers) || routers.length === 0) {
+      throw new FetchError("No available routers found in the response");
+    }
+    return routers[Math.floor(Math.random() * routers.length)];
   }
 
   // node_modules/tinfoil/dist/secure-client.js
@@ -14237,6 +14304,57 @@ jaDTSFaq1NIwodHp7X9fOG48uRuJWS8GmifD969sC4Ut2FJFoklceBVUNCHR
         }
       });
       return socket;
+    }
+  };
+
+  // node_modules/tinfoil/dist/unverified-client.js
+  init_verifier();
+  var UnverifiedClient = class {
+    constructor(options = {}) {
+      this.initPromise = null;
+      this._transport = null;
+      console.warn("[tinfoil] WARNING: UnverifiedClient is insecure. The HPKE key is fetched from the server without attestation verification. Only use for local development and testing of the EHBP protocol.");
+      this.baseURL = options.baseURL;
+      this.keyOrigin = options.keyOrigin;
+    }
+    async ready() {
+      if (!this.initPromise) {
+        this.initPromise = this.initUnverifiedClient();
+      }
+      return this.initPromise;
+    }
+    async initUnverifiedClient() {
+      if (!this.baseURL && !this.keyOrigin) {
+        const routerAddress = await fetchRouter();
+        this.keyOrigin = `https://${routerAddress}`;
+        this.baseURL = `https://${routerAddress}/v1/`;
+      }
+      if (!this.baseURL) {
+        if (this.keyOrigin) {
+          const keyOriginUrl = new URL(this.keyOrigin);
+          this.baseURL = `${keyOriginUrl.origin}/v1/`;
+        } else {
+          throw new ConfigurationError("Unable to determine baseURL: neither baseURL nor keyOrigin provided");
+        }
+      }
+      if (!this.keyOrigin) {
+        if (this.baseURL) {
+          const baseUrl = new URL(this.baseURL);
+          this.keyOrigin = baseUrl.origin;
+        } else {
+          throw new ConfigurationError("Unable to determine keyOrigin: neither baseURL nor keyOrigin provided");
+        }
+      }
+      this._transport = createUnverifiedEncryptedBodyFetch(this.baseURL, this.keyOrigin);
+    }
+    async getVerificationDocument() {
+      throw new ConfigurationError("Verification document unavailable: this version of the client is unverified");
+    }
+    get fetch() {
+      return async (input, init) => {
+        await this.ready();
+        return this._transport.fetch(input, init);
+      };
     }
   };
 
