@@ -1,0 +1,28 @@
+{
+  "name": "demo-personalization-frontend",
+  "version": "1.0.0",
+  "description": "A dependency-free, single-page JS frontend for the [demo-personalization](../demo-personalization) control server. Train a private LoRA adapter on your own writing, then chat with it — all inside a Tinfoil enclave.",
+  "main": "app.js",
+  "scripts": {
+    "build:vendor": "node build-vendor.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tinfoilsh/demo-personalization-frontend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/tinfoilsh/demo-personalization-frontend/issues"
+  },
+  "homepage": "https://github.com/tinfoilsh/demo-personalization-frontend#readme",
+  "private": "true",
+  "dependencies": {
+    "tinfoil": "^1.1.6"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  }
+}
