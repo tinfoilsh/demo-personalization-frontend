@@ -22,31 +22,19 @@ const state = {
   compare: false, // compare-base side-by-side on?
 };
 
-// ── secure client (attestation + EHBP) ─────────────────────
-// One SecureClient per enclave URL. The Tinfoil shim in front of the control
-// server terminates TLS + speaks EHBP, so client.fetch attests the enclave
-// (fetches the bundle from ATC, verifies code + enclave measurements against
-// the configRepo) and encrypts every request body end-to-end. The demo key
-// travels as a header (X-Demo-Key); the encryption key travels in the body,
-// sealed by EHBP so only the verified enclave can see it.
+// ── secure client (EHBP encryption, no attestation) ────────
+// UnverifiedClient fetches the HPKE key directly from the enclave (no ATC,
+// no attestation verification) and encrypts every request body end-to-end via
+// EHBP. The enclave is not verified — see the footer. When TDX attestation
+// lands in the JS SDK, swap this back to SecureClient({ enclaveURL, configRepo }).
 let secureClient = null;
 let secureClientBase = null;
-let attestationError = null;
 
 function getSecureClient() {
   const base = state.apiBase.replace(/\/$/, "");
   if (secureClient && secureClientBase === base) return secureClient;
-  secureClient = new Tinfoil.SecureClient({
-    enclaveURL: base,
-    configRepo: window.TINFOIL_CONFIG_REPO,
-  });
+  secureClient = new Tinfoil.UnverifiedClient({ baseURL: base });
   secureClientBase = base;
-  attestationError = null;
-  // Kick off attestation in the background; client.fetch awaits ready() on the
-  // first real request. A failed ready() surfaces as an error on that request.
-  secureClient.ready().catch((e) => {
-    attestationError = e;
-  });
   return secureClient;
 }
 
@@ -77,14 +65,13 @@ function headers() {
 }
 
 // Build a JSON body that includes the encryption key (EHBP-encrypted, so only
-// the verified enclave sees it). Every authenticated endpoint takes this.
+// the enclave sees it). Every authenticated endpoint takes this.
 function authBody(payload = {}) {
   return JSON.stringify({ ...payload, encryption_key: state.encKey });
 }
 
-// All requests go through the attesting SecureClient instead of raw fetch.
-// client.fetch resolves the path against the enclave URL, encrypts the body via
-// EHBP, and verifies the enclave on the first call (cached thereafter).
+// All requests go through the EHBP-encrypting client. client.fetch resolves
+// the path against the enclave URL and encrypts the body via EHBP (HPKE).
 async function api(path, opts = {}) {
   const client = getSecureClient();
   const res = await client.fetch(path, {
@@ -714,25 +701,10 @@ function friendly(err) {
   if (err instanceof TypeError) {
     return "can't reach the control server — check the url / CORS";
   }
-  // SecureClient attestation failures (enclave verification, ATC fetch, etc.).
-  // These have a `.name` set by the SDK's error classes.
-  if (
-    err instanceof Tinfoil.AttestationError ||
-    err instanceof Tinfoil.ConfigurationError ||
-    err instanceof Tinfoil.FetchError ||
-    err instanceof Tinfoil.TinfoilError
-  ) {
-    return `couldn't verify the secure enclave: ${err.message}`;
-  }
   return err.message || String(err);
 }
 
 // ── boot ───────────────────────────────────────────────────
-// Kick off enclave attestation as early as possible — it takes a few seconds
-// (fetch bundle from ATC, verify sigstore + enclave measurements). The first
-// client.fetch awaits ready() if it's not done yet.
-getSecureClient();
-
 (async function boot() {
   if (!state.demoKey) {
     show("view-gate");
