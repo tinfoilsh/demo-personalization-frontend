@@ -332,8 +332,8 @@ $("add-paste-btn").addEventListener("click", () => {
 
 function enterTrain() {
   refreshTopbar(true);
+  setTrainingMode(false); // ensure inputs are visible, progress hidden
   renderSources();
-  setHidden($("train-progress"), true);
   setHidden($("train-error"), true);
   show("view-train");
 }
@@ -359,10 +359,17 @@ $("train-btn").addEventListener("click", async () => {
 });
 
 let pollTimer = null;
+
+// Hide every input affordance while a job runs; restore them if it fails.
+function setTrainingMode(on) {
+  for (const id of ["dropzone", "paste-block", "sources-list", "chunk-summary", "train-btn"]) {
+    setHidden($(id), on);
+  }
+  setHidden($("train-progress"), !on);
+}
+
 function showTrainingProgress() {
-  $("train-btn").disabled = true;
-  $("dropzone").classList.add("hidden");
-  setHidden($("train-progress"), false);
+  setTrainingMode(true);
   pollStatus();
 }
 
@@ -375,9 +382,8 @@ async function pollStatus() {
       return;
     }
     if (s.status === "failed") {
-      $("train-btn").disabled = false;
-      $("dropzone").classList.remove("hidden");
-      setHidden($("train-progress"), true);
+      setTrainingMode(false);
+      renderSources(); // restore the correct disabled state on the button
       setText(
         $("train-error"),
         `training failed: ${s.error || "unknown error"}`,
