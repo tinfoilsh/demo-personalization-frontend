@@ -14,6 +14,7 @@ const state = {
   demoKey: localStorage.getItem(LS.demoKey) || "",
   encKey: sessionStorage.getItem(SS.encKey) || "",
   adapter: "",
+  sources: [], // train inputs: {id, name, chunks}
   messages: [], // ephemeral conversation: {role, content}
   sending: false,
 };
@@ -185,51 +186,169 @@ $("key-form").addEventListener("submit", async (e) => {
   }
 });
 
-// ── train ──────────────────────────────────────────────────
-function addDocField(value = "") {
-  const wrap = document.createElement("div");
-  wrap.className = "doc-item";
-  const ta = document.createElement("textarea");
-  ta.placeholder = "Paste a document written in the voice you want to teach…";
-  ta.value = value;
-  const rm = document.createElement("button");
-  rm.className = "doc-remove";
-  rm.type = "button";
-  rm.textContent = "×";
-  rm.title = "remove";
-  rm.addEventListener("click", () => {
-    wrap.remove();
-    if (!$("docs-list").children.length) addDocField();
-  });
-  wrap.append(ta, rm);
-  $("docs-list").appendChild(wrap);
-  return ta;
+// ── train: chunking ────────────────────────────────────────
+// Ported verbatim from examples/lovecraft/chunk.py so the frontend produces the
+// exact `documents` the trainer expects: pack whole paragraphs (split on "\n")
+// up to ~target words, never splitting mid-paragraph, and merge-or-drop a short
+// final tail. Each chunk becomes one element of the /train `documents` array.
+const CHUNK_TARGET = 300; // words
+const CHUNK_MIN = 80; // words
+
+function wordCount(s) {
+  const t = s.trim();
+  return t ? t.split(/\s+/).length : 0;
 }
 
-$("add-doc-btn").addEventListener("click", () => addDocField().focus());
+function chunkText(text, target = CHUNK_TARGET, min = CHUNK_MIN) {
+  const paragraphs = text
+    .split("\n")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const chunks = [];
+  let buf = [];
+  let count = 0;
+  for (const para of paragraphs) {
+    buf.push(para);
+    count += wordCount(para);
+    if (count >= target) {
+      chunks.push(buf.join("\n"));
+      buf = [];
+      count = 0;
+    }
+  }
+  if (buf.length) {
+    const tail = buf.join("\n");
+    if (wordCount(tail) >= min || chunks.length === 0) {
+      chunks.push(tail);
+    } else {
+      chunks[chunks.length - 1] += "\n" + tail;
+    }
+  }
+  return chunks.filter((c) => wordCount(c) >= min);
+}
+
+// ── train: sources ─────────────────────────────────────────
+// Each source is one input file/paste: {name, text, chunks}. Chunked per-source
+// (like running chunk.py per file); the /train payload is all chunks concatenated.
+let sourceSeq = 0;
+
+function addSource(name, text) {
+  text = text.replace(/\r\n?/g, "\n"); // normalize to \n; matches chunk.py on \n
+  if (!text.trim()) return;
+  state.sources.push({ id: ++sourceSeq, name, chunks: chunkText(text) });
+  renderSources();
+}
+
+function removeSource(id) {
+  state.sources = state.sources.filter((s) => s.id !== id);
+  renderSources();
+}
+
+function totalChunks() {
+  return state.sources.reduce((n, s) => n + s.chunks.length, 0);
+}
+
+function renderSources() {
+  const list = $("sources-list");
+  list.innerHTML = "";
+  for (const s of state.sources) {
+    const row = document.createElement("div");
+    row.className = "source-item";
+    const name = document.createElement("span");
+    name.className = "source-name";
+    name.textContent = s.name;
+    const stat = document.createElement("span");
+    const n = s.chunks.length;
+    stat.className = "source-stat" + (n ? "" : " warn");
+    stat.textContent = n ? `${n} chunk${n === 1 ? "" : "s"}` : "too short";
+    const rm = document.createElement("button");
+    rm.className = "source-remove";
+    rm.type = "button";
+    rm.textContent = "×";
+    rm.title = "remove";
+    rm.addEventListener("click", () => removeSource(s.id));
+    row.append(name, stat, rm);
+    list.appendChild(row);
+  }
+
+  const total = totalChunks();
+  const summary = $("chunk-summary");
+  setHidden(summary, state.sources.length === 0);
+  summary.textContent = `${state.sources.length} source${
+    state.sources.length === 1 ? "" : "s"
+  } · ${total} training chunk${total === 1 ? "" : "s"} ready`;
+  $("train-btn").disabled = total === 0;
+}
+
+// ── train: file intake ─────────────────────────────────────
+async function intakeFiles(fileList) {
+  for (const file of fileList) {
+    try {
+      addSource(file.name, await file.text());
+    } catch {
+      // ignore unreadable files
+    }
+  }
+}
+
+const dropzone = $("dropzone");
+const fileInput = $("file-input");
+
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
+fileInput.addEventListener("change", () => {
+  intakeFiles(fileInput.files);
+  fileInput.value = ""; // allow re-selecting the same file
+});
+["dragenter", "dragover"].forEach((ev) =>
+  dropzone.addEventListener(ev, (e) => {
+    e.preventDefault();
+    dropzone.classList.add("dragover");
+  }),
+);
+["dragleave", "drop"].forEach((ev) =>
+  dropzone.addEventListener(ev, (e) => {
+    e.preventDefault();
+    if (ev === "dragleave" && dropzone.contains(e.relatedTarget)) return;
+    dropzone.classList.remove("dragover");
+  }),
+);
+dropzone.addEventListener("drop", (e) => {
+  if (e.dataTransfer?.files?.length) intakeFiles(e.dataTransfer.files);
+});
+
+$("add-paste-btn").addEventListener("click", () => {
+  const ta = $("paste-input");
+  if (!ta.value.trim()) return;
+  addSource(`pasted text ${state.sources.length + 1}`, ta.value);
+  ta.value = "";
+  $("paste-block").open = false;
+});
 
 function enterTrain() {
   refreshTopbar(true);
-  if (!$("docs-list").children.length) addDocField();
+  renderSources();
   setHidden($("train-progress"), true);
   setHidden($("train-error"), true);
-  $("train-btn").disabled = false;
   show("view-train");
 }
 
 $("train-btn").addEventListener("click", async () => {
   setHidden($("train-error"), true);
-  const docs = [...$("docs-list").querySelectorAll("textarea")]
-    .map((t) => t.value.trim())
-    .filter(Boolean);
-  if (!docs.length) {
-    setText($("train-error"), "add at least one document");
+  const documents = state.sources.flatMap((s) => s.chunks);
+  if (!documents.length) {
+    setText($("train-error"), "add at least one source");
     setHidden($("train-error"), false);
     return;
   }
   busy($("train-btn"), true);
   try {
-    await startTraining(docs);
+    await startTraining(documents);
     showTrainingProgress();
   } catch (err) {
     setText($("train-error"), friendly(err));
@@ -242,7 +361,7 @@ $("train-btn").addEventListener("click", async () => {
 let pollTimer = null;
 function showTrainingProgress() {
   $("train-btn").disabled = true;
-  $("add-doc-btn").disabled = true;
+  $("dropzone").classList.add("hidden");
   setHidden($("train-progress"), false);
   pollStatus();
 }
@@ -257,7 +376,7 @@ async function pollStatus() {
     }
     if (s.status === "failed") {
       $("train-btn").disabled = false;
-      $("add-doc-btn").disabled = false;
+      $("dropzone").classList.remove("hidden");
       setHidden($("train-progress"), true);
       setText(
         $("train-error"),
@@ -394,6 +513,7 @@ function logout(reason) {
   state.encKey = "";
   state.adapter = "";
   state.messages = [];
+  state.sources = [];
   sessionStorage.removeItem(SS.encKey);
   refreshTopbar(false);
   show("view-key");

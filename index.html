@@ -88,13 +88,41 @@
         <div class="panel-tag">train</div>
         <h1>Teach it your style</h1>
         <p class="muted">
-          No adapter exists for this key yet. Add a few documents in the voice
-          you want the model to learn, then kick off a private RL run.
+          No adapter exists for this key yet. Drop in writing samples — text or
+          markdown — in the voice you want the model to learn, then kick off a
+          private RL run.
         </p>
-        <div id="docs-list" class="docs-list"></div>
-        <button id="add-doc-btn" class="ghost-btn add-doc" type="button">
-          + add document
-        </button>
+
+        <div id="dropzone" class="dropzone" tabindex="0">
+          <input
+            id="file-input"
+            type="file"
+            accept=".txt,.md,.markdown,text/plain,text/markdown"
+            multiple
+            hidden
+          />
+          <span class="dz-icon">⤓</span>
+          <span class="dz-title">Drop files or click to browse</span>
+          <span class="dz-sub">.txt or .md</span>
+        </div>
+
+        <details class="advanced paste-block">
+          <summary>or paste text</summary>
+          <div class="field paste-field">
+            <textarea
+              id="paste-input"
+              rows="4"
+              placeholder="Paste a writing sample…"
+            ></textarea>
+            <button id="add-paste-btn" class="ghost-btn" type="button">
+              + add as source
+            </button>
+          </div>
+        </details>
+
+        <div id="sources-list" class="sources-list"></div>
+        <div id="chunk-summary" class="chunk-summary hidden"></div>
+
         <button id="train-btn" class="primary-btn" type="button">
           <span class="btn-label">Start training</span>
           <span class="btn-spinner hidden"></span>
