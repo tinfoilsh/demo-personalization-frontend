@@ -23,7 +23,9 @@ then visit http://localhost:5173.
    - `ready` → **chat** view
    - `training` → progress, polled every 5s
    - `failed` → train view with the error
-3. **Train** — add documents in the voice to learn, `POST /train`, poll until ready.
+3. **Train** — drag in `.txt`/`.md` files (or paste text). Each source is chunked
+   client-side, then all chunks are sent as `documents` to `POST /train`; polls until
+   ready.
 4. **Chat** — ephemeral conversation (cleared on refresh); the full message list is
    sent each turn. Toggle **compare base** to send `use_base: true` and see the base
    model's answer instead of your adapter's.

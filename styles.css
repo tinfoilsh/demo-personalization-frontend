@@ -325,22 +325,94 @@ textarea {
 }
 
 /* ── train view ─────────────────────────────────────────── */
-.docs-list {
+.dropzone {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  padding: 30px 20px;
+  border: 1.5px dashed var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  cursor: pointer;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.dropzone:hover,
+.dropzone:focus-visible {
+  border-color: var(--accent-dim);
+  background: var(--bg-elev);
+}
+.dropzone.dragover {
+  border-color: var(--accent);
+  background: var(--bg-elev);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.dz-icon {
+  font-size: 22px;
+  color: var(--accent);
+}
+.dz-title {
+  font-weight: 500;
+}
+.dz-sub {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted-dim);
+}
+
+.paste-block {
+  margin-top: 14px;
+}
+.paste-field {
+  margin-top: 12px;
+}
+.paste-field textarea {
+  min-height: 90px;
+}
+.paste-field .ghost-btn {
+  align-self: flex-start;
+  margin-top: 10px;
+}
+
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+}
+.source-item {
+  display: flex;
+  align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
 }
-.doc-item {
-  position: relative;
+.source-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
 }
-.doc-item textarea {
-  min-height: 84px;
+.source-stat {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  flex: none;
 }
-.doc-remove {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+.source-stat.warn {
+  color: var(--danger);
+}
+.source-remove {
+  flex: none;
   background: var(--bg-elev);
   border: 1px solid var(--line);
   color: var(--muted-dim);
@@ -351,16 +423,21 @@ textarea {
   font-size: 13px;
   line-height: 1;
 }
-.doc-remove:hover {
+.source-remove:hover {
   color: var(--danger);
   border-color: var(--danger);
 }
-.add-doc {
-  align-self: flex-start;
-  margin-bottom: 22px;
+
+.chunk-summary {
+  margin-top: 14px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--accent);
 }
+
 #view-train .primary-btn {
   width: 100%;
+  margin-top: 18px;
 }
 
 .train-progress {
